@@ -106,7 +106,7 @@ func (d *decoder) readAttentionResponse() *AttentionResponse {
 
 	var attentionDetails []TreeEntry
 	if !d.isOptionalSkipped() {
-		count := d.readListLength()
+		count := d.safeListLength(d.readListLength())
 		if d.err != nil {
 			return nil
 		}
@@ -202,7 +202,7 @@ func (d *decoder) readGetProfileListResponse() *GetProfileListResponse {
 	valTime := d.readOptionalTime()
 	status := d.readOptionalUnsignedPtr()
 
-	valCount := d.readListLength()
+	valCount := d.safeListLength(d.readListLength())
 	if d.err != nil {
 		return nil
 	}
@@ -271,7 +271,7 @@ func (d *decoder) readProfileObjPeriodEntry() ProfileObjPeriodEntry {
 	valTime := d.readOptionalTime()
 	status := d.readOptionalUnsignedPtr()
 
-	valueCount := d.readListLength()
+	valueCount := d.safeListLength(d.readListLength())
 	if d.err != nil {
 		return ProfileObjPeriodEntry{}
 	}
@@ -307,7 +307,7 @@ func (d *decoder) readGetProfilePackResponse() *GetProfilePackResponse {
 	regPeriod := d.readOptionalUint32Ptr()
 	parameterTreePath := d.readTreePath()
 
-	headerCount := d.readListLength()
+	headerCount := d.safeListLength(d.readListLength())
 	if d.err != nil {
 		return nil
 	}
@@ -316,7 +316,7 @@ func (d *decoder) readGetProfilePackResponse() *GetProfilePackResponse {
 		headerList[i] = d.readProfileObjHeaderEntry()
 	}
 
-	periodCount := d.readListLength()
+	periodCount := d.safeListLength(d.readListLength())
 	if d.err != nil {
 		return nil
 	}
@@ -360,7 +360,7 @@ func (d *decoder) readGetListResponse() *GetListResponse {
 	listName := d.readOptionalOctetString()
 	actSensorTime := d.readOptionalTime()
 
-	valCount := d.readListLength()
+	valCount := d.safeListLength(d.readListLength())
 	if d.err != nil {
 		return nil
 	}

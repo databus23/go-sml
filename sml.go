@@ -182,7 +182,8 @@ func skipTLV(d *decoder) {
 	}
 
 	if typ == 0x70 {
-		// List: skip each child element
+		// List: skip each child element; cap to remaining bytes to prevent huge loops.
+		length = d.safeListLength(length)
 		for i := 0; i < length; i++ {
 			skipTLV(d)
 		}

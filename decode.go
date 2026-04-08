@@ -55,11 +55,20 @@ func (d *decoder) readTypeLength() (typ byte, length int) {
 			return 0, 0
 		}
 		length = (length << 4) | int(b&0x0F)
+		if length < 0 {
+			// Integer overflow from malformed multi-byte TL field.
+			d.err = fmt.Errorf("sml: TLV length field overflow")
+			return 0, 0
+		}
 		tlBytes++
 	}
 
 	if typ != 0x70 { // not a list
 		length -= tlBytes
+		if length < 0 {
+			d.err = fmt.Errorf("sml: TLV length field %d smaller than TL header (%d bytes)", length+tlBytes, tlBytes)
+			return 0, 0
+		}
 	}
 
 	return typ, length
@@ -250,6 +259,17 @@ func (d *decoder) readListLength() int {
 	return length
 }
 
+// safeListLength returns n capped to the number of bytes remaining in the buffer.
+// This prevents huge allocations and loops when malformed data encodes a list
+// element count larger than the remaining bytes could possibly satisfy.
+func (d *decoder) safeListLength(n int) int {
+	remaining := len(d.buf) - d.pos
+	if n > remaining {
+		return remaining
+	}
+	return n
+}
+
 // readOptionalOctetString reads an optional octet string. Returns nil if the
 // field is absent (0x01 marker).
 func (d *decoder) readOptionalOctetString() []byte {
@@ -289,7 +309,7 @@ func (d *decoder) readTime() Time {
 		if d.err != nil {
 			return Time{}
 		}
-		return Time{Tag: uint8(tag.(Uint8)), Value: uint32(toUint64(val))}
+		return Time{Tag: uint8(toUint64(tag)), Value: uint32(toUint64(val))}
 	}
 	// Holley workaround: bare unsigned
 	val := d.readUnsigned()
@@ -313,7 +333,7 @@ func (d *decoder) readOptionalTime() *Time {
 
 // readTreePath reads a list of octet strings representing a tree path.
 func (d *decoder) readTreePath() TreePath {
-	n := d.readListLength()
+	n := d.safeListLength(d.readListLength())
 	if d.err != nil {
 		return nil
 	}
@@ -332,7 +352,7 @@ func (d *decoder) readTreeEntry() TreeEntry {
 	value := d.readOptionalValue()
 	var children []TreeEntry
 	if !d.isOptionalSkipped() {
-		n := d.readListLength()
+		n := d.safeListLength(d.readListLength())
 		if d.err != nil {
 			return TreeEntry{}
 		}
