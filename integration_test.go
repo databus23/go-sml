@@ -15,8 +15,9 @@ import (
 )
 
 // formatOctetStringMixed formats an OctetString using the C sml_server "mixed"
-// algorithm: bytes > 0x20 and < 0x7b are output as ASCII, but once any byte
-// fails the printable test, all remaining bytes use lowercase hex with trailing space.
+// algorithm: bytes in range (0x20, 0x7b) are output as ASCII; once any byte falls
+// outside that range, all remaining bytes use lowercase hex with trailing space.
+// The thresholds match sml_server exactly (not general ASCII printability).
 func formatOctetStringMixed(data []byte) string {
 	var b strings.Builder
 	mixed := true
@@ -111,7 +112,7 @@ func formatListEntry(entry *sml.ListEntry) (string, bool) {
 
 // collectSMLServerOutput reads all frames from a .bin file, decodes them,
 // and formats all GetListResponse entries matching C sml_server output.
-func collectSMLServerOutput(binData []byte) ([]string, error) {
+func collectSMLServerOutput(binData []byte) []string {
 	reader := transport.NewReader(bytes.NewReader(binData))
 	var lines []string
 
@@ -125,13 +126,9 @@ func collectSMLServerOutput(binData []byte) ([]string, error) {
 			continue
 		}
 
-		file, err := sml.DecodeWithOptions(frame, sml.DecodeOptions{Strict: false})
-		if err != nil && file == nil {
-			continue
-		}
-		if file == nil {
-			continue
-		}
+		// DecodeWithOptions with Strict=false always returns a non-nil file,
+		// collecting partial results alongside errors.
+		file, _ := sml.DecodeWithOptions(frame, sml.DecodeOptions{Strict: false})
 
 		for _, msg := range file.Messages {
 			glr, ok := msg.Body.(*sml.GetListResponse)
@@ -147,7 +144,7 @@ func collectSMLServerOutput(binData []byte) ([]string, error) {
 		}
 	}
 
-	return lines, nil
+	return lines
 }
 
 // filterGoldenLines removes C sml_server debug/error lines from golden file content.
@@ -195,25 +192,20 @@ func TestGoldenFiles(t *testing.T) {
 				t.Fatalf("reading bin file: %v", err)
 			}
 
-			gotLines, err := collectSMLServerOutput(binData)
+			gotLines := collectSMLServerOutput(binData)
 
 			if isErrorGolden && len(goldenLines) == 0 {
-				// Error golden with no data lines — just verify we don't crash.
-				// We may get 0 lines or an error, both are acceptable.
+				// Error golden with no data lines — verify parser produces no output.
+				if len(gotLines) > 0 {
+					t.Errorf("expected no output for error golden, got %d lines", len(gotLines))
+				}
 				return
-			}
-
-			if err != nil {
-				t.Fatalf("processing bin file: %v", err)
 			}
 
 			if len(gotLines) != len(goldenLines) {
 				t.Errorf("line count mismatch: got %d, want %d", len(gotLines), len(goldenLines))
 				// Show first divergence for debugging.
-				minLen := len(gotLines)
-				if len(goldenLines) < minLen {
-					minLen = len(goldenLines)
-				}
+				minLen := min(len(gotLines), len(goldenLines))
 				for i := 0; i < minLen; i++ {
 					if gotLines[i] != goldenLines[i] {
 						t.Errorf("first mismatch at line %d:\n  got:  %q\n  want: %q", i+1, gotLines[i], goldenLines[i])
