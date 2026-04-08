@@ -146,6 +146,14 @@ func decodeMessageBody(d *decoder) (MessageBody, error) {
 		return d.readCloseResponse(), d.err
 	case tagGetListResponse:
 		return d.readGetListResponse(), d.err
+	case tagAttentionResponse:
+		return d.readAttentionResponse(), d.err
+	case tagGetProcParameterResponse:
+		return d.readGetProcParameterResponse(), d.err
+	case tagGetProfileListResponse:
+		return d.readGetProfileListResponse(), d.err
+	case tagGetProfilePackResponse:
+		return d.readGetProfilePackResponse(), d.err
 	default:
 		// Unknown or request tag — skip past the body data.
 		// The body is the next TLV element; skip it by reading its type-length

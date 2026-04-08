@@ -463,6 +463,499 @@ func TestParseGetListResponse(t *testing.T) {
 	})
 }
 
+func TestParseAttentionResponse(t *testing.T) {
+	t.Run("all fields present with details", func(t *testing.T) {
+		// AttentionResponse = 4-element list (0x74)
+		// server_id:         0x05 0x0A 0x0B 0x0C 0x0D  (4 bytes)
+		// attention_no:      0x07 0x81 0x81 0xC7 0xC7 0xFE 0xFF  (6 bytes)
+		// attention_msg:     0x06 0x48 0x65 0x6C 0x6C 0x6F       ("Hello", 5 bytes)
+		// attention_details: list of 1 TreeEntry
+		//   tree entry = 3-element list (0x73)
+		//     parameter_name:  0x03 0xAA 0xBB (2 bytes)
+		//     parameter_value: 0x01 (absent)
+		//     child_list:      0x01 (absent)
+		input := []byte{
+			0x74,                                           // list of 4
+			0x05, 0x0A, 0x0B, 0x0C, 0x0D,                  // server_id
+			0x07, 0x81, 0x81, 0xC7, 0xC7, 0xFE, 0xFF,      // attention_no
+			0x06, 0x48, 0x65, 0x6C, 0x6C, 0x6F,            // attention_msg: "Hello"
+			0x71,                                           // details: list of 1
+			0x73,                                           // tree entry: list of 3
+			0x03, 0xAA, 0xBB,                               // parameter_name
+			0x01,                                           // parameter_value: absent
+			0x01,                                           // child_list: absent
+		}
+		d := newDecoder(input)
+		got := d.readAttentionResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil AttentionResponse")
+		}
+
+		wantServerID := []byte{0x0A, 0x0B, 0x0C, 0x0D}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		wantAttNo := []byte{0x81, 0x81, 0xC7, 0xC7, 0xFE, 0xFF}
+		if !bytes.Equal(got.AttentionNo, wantAttNo) {
+			t.Fatalf("AttentionNo = %X, want %X", got.AttentionNo, wantAttNo)
+		}
+
+		if got.AttentionMsg == nil {
+			t.Fatal("AttentionMsg = nil, want non-nil")
+		}
+		if *got.AttentionMsg != "Hello" {
+			t.Fatalf("AttentionMsg = %q, want %q", *got.AttentionMsg, "Hello")
+		}
+
+		if len(got.AttentionDetails) != 1 {
+			t.Fatalf("len(AttentionDetails) = %d, want 1", len(got.AttentionDetails))
+		}
+		wantName := []byte{0xAA, 0xBB}
+		if !bytes.Equal(got.AttentionDetails[0].ParameterName, wantName) {
+			t.Fatalf("AttentionDetails[0].ParameterName = %X, want %X", got.AttentionDetails[0].ParameterName, wantName)
+		}
+	})
+
+	t.Run("optionals absent", func(t *testing.T) {
+		// AttentionResponse = 4-element list (0x74)
+		// server_id:         0x03 0xAA 0xBB  (2 bytes)
+		// attention_no:      0x03 0xCC 0xDD  (2 bytes)
+		// attention_msg:     0x01 (absent)
+		// attention_details: 0x01 (absent)
+		input := []byte{
+			0x74,                   // list of 4
+			0x03, 0xAA, 0xBB,      // server_id
+			0x03, 0xCC, 0xDD,      // attention_no
+			0x01,                   // attention_msg: absent
+			0x01,                   // attention_details: absent
+		}
+		d := newDecoder(input)
+		got := d.readAttentionResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil AttentionResponse")
+		}
+
+		wantServerID := []byte{0xAA, 0xBB}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		wantAttNo := []byte{0xCC, 0xDD}
+		if !bytes.Equal(got.AttentionNo, wantAttNo) {
+			t.Fatalf("AttentionNo = %X, want %X", got.AttentionNo, wantAttNo)
+		}
+
+		if got.AttentionMsg != nil {
+			t.Fatalf("AttentionMsg = %v, want nil", *got.AttentionMsg)
+		}
+		if got.AttentionDetails != nil {
+			t.Fatalf("AttentionDetails = %v, want nil", got.AttentionDetails)
+		}
+	})
+}
+
+func TestParseGetProcParameterResponse(t *testing.T) {
+	t.Run("simple tree", func(t *testing.T) {
+		// GetProcParameterResponse = 3-element list (0x73)
+		// server_id:      0x05 0x0A 0x0B 0x0C 0x0D  (4 bytes)
+		// tree_path:      list of 1 octet string
+		//   0x71 → 0x07 0x01 0x00 0x01 0x08 0x00 0xFF  (OBIS 1-0:1.8.0*255)
+		// parameter_tree: 3-element list (TreeEntry)
+		//   parameter_name:  0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		//   parameter_value: 0x65 0x00 0x01 0xE2 0x40  (u32=123456)
+		//   child_list:      0x01 (absent)
+		input := []byte{
+			0x73,                                           // list of 3
+			0x05, 0x0A, 0x0B, 0x0C, 0x0D,                  // server_id
+			0x71,                                           // tree_path: list of 1
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // path element
+			0x73,                                           // parameter_tree: list of 3
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // parameter_name
+			0x65, 0x00, 0x01, 0xE2, 0x40,                  // parameter_value: u32=123456
+			0x01,                                           // child_list: absent
+		}
+		d := newDecoder(input)
+		got := d.readGetProcParameterResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetProcParameterResponse")
+		}
+
+		wantServerID := []byte{0x0A, 0x0B, 0x0C, 0x0D}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		if len(got.TreePath) != 1 {
+			t.Fatalf("len(TreePath) = %d, want 1", len(got.TreePath))
+		}
+		wantPath := []byte{0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}
+		if !bytes.Equal(got.TreePath[0], wantPath) {
+			t.Fatalf("TreePath[0] = %X, want %X", got.TreePath[0], wantPath)
+		}
+
+		if got.ParameterTree == nil {
+			t.Fatal("ParameterTree = nil, want non-nil")
+		}
+		wantName := []byte{0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}
+		if !bytes.Equal(got.ParameterTree.ParameterName, wantName) {
+			t.Fatalf("ParameterTree.ParameterName = %X, want %X", got.ParameterTree.ParameterName, wantName)
+		}
+		if got.ParameterTree.ParameterValue != Uint32(123456) {
+			t.Fatalf("ParameterTree.ParameterValue = %v, want Uint32(123456)", got.ParameterTree.ParameterValue)
+		}
+	})
+}
+
+func TestParseGetProfileListResponse(t *testing.T) {
+	t.Run("minimal with one period entry", func(t *testing.T) {
+		// GetProfileListResponse = 9-element list (0x79)
+		// server_id:            0x05 0x0A 0x0B 0x0C 0x0D  (4 bytes)
+		// act_time:             0x01 (absent)
+		// reg_period:           0x65 0x00 0x00 0x03 0x84  (u32=900)
+		// parameter_tree_path:  list of 1 → 0x71 0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		// val_time:             0x72 0x62 0x01 0x65 0x00 0x00 0x30 0x39  (SecIndex=12345)
+		// status:               0x01 (absent)
+		// val_list:             list of 1 PeriodEntry
+		//   PeriodEntry = 5-element list (0x75)
+		//     obj_name:  0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		//     unit:      0x62 0x1E (u8=30)
+		//     scaler:    0x52 0xFE (i8=-2)
+		//     value:     0x65 0x00 0x01 0xE2 0x40 (u32=123456)
+		//     signature: 0x01 (absent)
+		// rawdata:              0x01 (absent)
+		// period_signature:     0x01 (absent)
+		input := []byte{
+			0x79,                                           // list of 9
+			0x05, 0x0A, 0x0B, 0x0C, 0x0D,                  // server_id
+			0x01,                                           // act_time: absent
+			0x65, 0x00, 0x00, 0x03, 0x84,                  // reg_period: u32=900
+			0x71,                                           // parameter_tree_path: list of 1
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // path element
+			0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x30, 0x39, // val_time: SecIndex=12345
+			0x01,                                           // status: absent
+			0x71,                                           // val_list: list of 1
+			0x75,                                           // PeriodEntry: list of 5
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // obj_name
+			0x62, 0x1E,                                     // unit: u8=30
+			0x52, 0xFE,                                     // scaler: i8=-2
+			0x65, 0x00, 0x01, 0xE2, 0x40,                  // value: u32=123456
+			0x01,                                           // signature: absent
+			0x01,                                           // rawdata: absent
+			0x01,                                           // period_signature: absent
+		}
+		d := newDecoder(input)
+		got := d.readGetProfileListResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetProfileListResponse")
+		}
+
+		wantServerID := []byte{0x0A, 0x0B, 0x0C, 0x0D}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		if got.ActTime != nil {
+			t.Fatalf("ActTime = %v, want nil", got.ActTime)
+		}
+
+		if got.RegPeriod == nil {
+			t.Fatal("RegPeriod = nil, want non-nil")
+		}
+		if *got.RegPeriod != 900 {
+			t.Fatalf("RegPeriod = %d, want 900", *got.RegPeriod)
+		}
+
+		if len(got.ParameterTreePath) != 1 {
+			t.Fatalf("len(ParameterTreePath) = %d, want 1", len(got.ParameterTreePath))
+		}
+
+		if got.ValTime == nil {
+			t.Fatal("ValTime = nil, want non-nil")
+		}
+		if got.ValTime.Tag != TimeSecIndex {
+			t.Fatalf("ValTime.Tag = %d, want %d", got.ValTime.Tag, TimeSecIndex)
+		}
+		if got.ValTime.Value != 12345 {
+			t.Fatalf("ValTime.Value = %d, want 12345", got.ValTime.Value)
+		}
+
+		if got.Status != nil {
+			t.Fatalf("Status = %v, want nil", *got.Status)
+		}
+
+		if len(got.ValList) != 1 {
+			t.Fatalf("len(ValList) = %d, want 1", len(got.ValList))
+		}
+		pe := got.ValList[0]
+		wantObjName := []byte{0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}
+		if !bytes.Equal(pe.ObjName, wantObjName) {
+			t.Fatalf("ValList[0].ObjName = %X, want %X", pe.ObjName, wantObjName)
+		}
+		if pe.Unit == nil || *pe.Unit != 30 {
+			t.Fatalf("ValList[0].Unit = %v, want 30", pe.Unit)
+		}
+		if pe.Scaler == nil || *pe.Scaler != -2 {
+			t.Fatalf("ValList[0].Scaler = %v, want -2", pe.Scaler)
+		}
+		if pe.Value != Uint32(123456) {
+			t.Fatalf("ValList[0].Value = %v, want Uint32(123456)", pe.Value)
+		}
+		if pe.Signature != nil {
+			t.Fatalf("ValList[0].Signature = %v, want nil", pe.Signature)
+		}
+
+		if got.RawData != nil {
+			t.Fatalf("RawData = %v, want nil", got.RawData)
+		}
+		if got.PeriodSignature != nil {
+			t.Fatalf("PeriodSignature = %v, want nil", got.PeriodSignature)
+		}
+	})
+
+	t.Run("all optionals absent, empty val_list", func(t *testing.T) {
+		// GetProfileListResponse = 9-element list (0x79)
+		// All optional fields absent, empty val_list
+		input := []byte{
+			0x79,                               // list of 9
+			0x03, 0x11, 0x22,                   // server_id: 2 bytes
+			0x01,                               // act_time: absent
+			0x01,                               // reg_period: absent
+			0x71,                               // parameter_tree_path: list of 1
+			0x03, 0xAA, 0xBB,                   // path element
+			0x01,                               // val_time: absent
+			0x01,                               // status: absent
+			0x70,                               // val_list: list of 0
+			0x01,                               // rawdata: absent
+			0x01,                               // period_signature: absent
+		}
+		d := newDecoder(input)
+		got := d.readGetProfileListResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetProfileListResponse")
+		}
+
+		wantServerID := []byte{0x11, 0x22}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+		if got.ActTime != nil {
+			t.Fatalf("ActTime = %v, want nil", got.ActTime)
+		}
+		if got.RegPeriod != nil {
+			t.Fatalf("RegPeriod = %v, want nil", *got.RegPeriod)
+		}
+		if got.ValTime != nil {
+			t.Fatalf("ValTime = %v, want nil", got.ValTime)
+		}
+		if got.Status != nil {
+			t.Fatalf("Status = %v, want nil", *got.Status)
+		}
+		if len(got.ValList) != 0 {
+			t.Fatalf("len(ValList) = %d, want 0", len(got.ValList))
+		}
+		if got.RawData != nil {
+			t.Fatalf("RawData = %v, want nil", got.RawData)
+		}
+		if got.PeriodSignature != nil {
+			t.Fatalf("PeriodSignature = %v, want nil", got.PeriodSignature)
+		}
+	})
+}
+
+func TestParseGetProfilePackResponse(t *testing.T) {
+	t.Run("one header, one period with one value", func(t *testing.T) {
+		// GetProfilePackResponse = 8-element list (0x78)
+		// server_id:            0x05 0x0A 0x0B 0x0C 0x0D  (4 bytes)
+		// act_time:             0x72 0x62 0x01 0x65 0x00 0x00 0x07 0xD0  (SecIndex=2000)
+		// reg_period:           0x65 0x00 0x00 0x03 0x84  (u32=900)
+		// parameter_tree_path:  list of 1 → 0x71 0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		// header_list:          list of 1 ProfileObjHeaderEntry
+		//   ProfileObjHeaderEntry = 3-element list (0x73)
+		//     obj_name: 0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		//     unit:     0x62 0x1E (u8=30)
+		//     scaler:   0x52 0xFE (i8=-2)
+		// period_list:          list of 1 ProfileObjPeriodEntry
+		//   ProfileObjPeriodEntry = 3-element list (0x73)
+		//     val_time:    0x72 0x62 0x01 0x65 0x00 0x00 0x30 0x39  (SecIndex=12345)
+		//     status:      0x01 (absent)
+		//     value_list:  list of 1 PeriodEntry
+		//       PeriodEntry = 5-element list (0x75)
+		//         obj_name:  0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		//         unit:      0x62 0x1E (u8=30)
+		//         scaler:    0x52 0xFE (i8=-2)
+		//         value:     0x65 0x00 0x01 0xE2 0x40 (u32=123456)
+		//         signature: 0x01 (absent)
+		// rawdata:              0x01 (absent)
+		// period_signature:     0x01 (absent)
+		input := []byte{
+			0x78,                                           // list of 8
+			0x05, 0x0A, 0x0B, 0x0C, 0x0D,                  // server_id
+			0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x07, 0xD0, // act_time: SecIndex=2000
+			0x65, 0x00, 0x00, 0x03, 0x84,                  // reg_period: u32=900
+			0x71,                                           // parameter_tree_path: list of 1
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // path element
+			// header_list: list of 1
+			0x71,
+			0x73,                                           // ProfileObjHeaderEntry: list of 3
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // obj_name
+			0x62, 0x1E,                                     // unit: u8=30
+			0x52, 0xFE,                                     // scaler: i8=-2
+			// period_list: list of 1
+			0x71,
+			0x73,                                           // ProfileObjPeriodEntry: list of 3
+			0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x30, 0x39, // val_time: SecIndex=12345
+			0x01,                                           // status: absent
+			// value_list: list of 1 PeriodEntry
+			0x71,
+			0x75,                                           // PeriodEntry: list of 5
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF,      // obj_name
+			0x62, 0x1E,                                     // unit: u8=30
+			0x52, 0xFE,                                     // scaler: i8=-2
+			0x65, 0x00, 0x01, 0xE2, 0x40,                  // value: u32=123456
+			0x01,                                           // signature: absent
+			// rawdata: absent
+			0x01,
+			// period_signature: absent
+			0x01,
+		}
+		d := newDecoder(input)
+		got := d.readGetProfilePackResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetProfilePackResponse")
+		}
+
+		wantServerID := []byte{0x0A, 0x0B, 0x0C, 0x0D}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		if got.ActTime == nil {
+			t.Fatal("ActTime = nil, want non-nil")
+		}
+		if got.ActTime.Tag != TimeSecIndex || got.ActTime.Value != 2000 {
+			t.Fatalf("ActTime = %+v, want SecIndex=2000", got.ActTime)
+		}
+
+		if got.RegPeriod == nil || *got.RegPeriod != 900 {
+			t.Fatalf("RegPeriod = %v, want 900", got.RegPeriod)
+		}
+
+		if len(got.ParameterTreePath) != 1 {
+			t.Fatalf("len(ParameterTreePath) = %d, want 1", len(got.ParameterTreePath))
+		}
+
+		// header_list
+		if len(got.HeaderList) != 1 {
+			t.Fatalf("len(HeaderList) = %d, want 1", len(got.HeaderList))
+		}
+		h := got.HeaderList[0]
+		wantObjName := []byte{0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}
+		if !bytes.Equal(h.ObjName, wantObjName) {
+			t.Fatalf("HeaderList[0].ObjName = %X, want %X", h.ObjName, wantObjName)
+		}
+		if h.Unit == nil || *h.Unit != 30 {
+			t.Fatalf("HeaderList[0].Unit = %v, want 30", h.Unit)
+		}
+		if h.Scaler == nil || *h.Scaler != -2 {
+			t.Fatalf("HeaderList[0].Scaler = %v, want -2", h.Scaler)
+		}
+
+		// period_list
+		if len(got.PeriodList) != 1 {
+			t.Fatalf("len(PeriodList) = %d, want 1", len(got.PeriodList))
+		}
+		p := got.PeriodList[0]
+		if p.ValTime == nil || p.ValTime.Tag != TimeSecIndex || p.ValTime.Value != 12345 {
+			t.Fatalf("PeriodList[0].ValTime = %+v, want SecIndex=12345", p.ValTime)
+		}
+		if p.Status != nil {
+			t.Fatalf("PeriodList[0].Status = %v, want nil", *p.Status)
+		}
+		if len(p.ValueList) != 1 {
+			t.Fatalf("len(PeriodList[0].ValueList) = %d, want 1", len(p.ValueList))
+		}
+		pe := p.ValueList[0]
+		if !bytes.Equal(pe.ObjName, wantObjName) {
+			t.Fatalf("PeriodList[0].ValueList[0].ObjName = %X, want %X", pe.ObjName, wantObjName)
+		}
+		if pe.Value != Uint32(123456) {
+			t.Fatalf("PeriodList[0].ValueList[0].Value = %v, want Uint32(123456)", pe.Value)
+		}
+
+		if got.RawData != nil {
+			t.Fatalf("RawData = %v, want nil", got.RawData)
+		}
+		if got.PeriodSignature != nil {
+			t.Fatalf("PeriodSignature = %v, want nil", got.PeriodSignature)
+		}
+	})
+
+	t.Run("all optionals absent, empty lists", func(t *testing.T) {
+		input := []byte{
+			0x78,                               // list of 8
+			0x03, 0x11, 0x22,                   // server_id: 2 bytes
+			0x01,                               // act_time: absent
+			0x01,                               // reg_period: absent
+			0x71,                               // parameter_tree_path: list of 1
+			0x03, 0xAA, 0xBB,                   // path element
+			0x70,                               // header_list: list of 0
+			0x70,                               // period_list: list of 0
+			0x01,                               // rawdata: absent
+			0x01,                               // period_signature: absent
+		}
+		d := newDecoder(input)
+		got := d.readGetProfilePackResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetProfilePackResponse")
+		}
+
+		wantServerID := []byte{0x11, 0x22}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+		if got.ActTime != nil {
+			t.Fatalf("ActTime = %v, want nil", got.ActTime)
+		}
+		if got.RegPeriod != nil {
+			t.Fatalf("RegPeriod = %v, want nil", *got.RegPeriod)
+		}
+		if len(got.HeaderList) != 0 {
+			t.Fatalf("len(HeaderList) = %d, want 0", len(got.HeaderList))
+		}
+		if len(got.PeriodList) != 0 {
+			t.Fatalf("len(PeriodList) = %d, want 0", len(got.PeriodList))
+		}
+		if got.RawData != nil {
+			t.Fatalf("RawData = %v, want nil", got.RawData)
+		}
+		if got.PeriodSignature != nil {
+			t.Fatalf("PeriodSignature = %v, want nil", got.PeriodSignature)
+		}
+	})
+}
+
 func TestParseCloseResponse(t *testing.T) {
 	t.Run("signature absent", func(t *testing.T) {
 		// 0x71 = list of 1 element

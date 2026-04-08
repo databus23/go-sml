@@ -393,6 +393,20 @@ func (d *decoder) readOptionalStringPtr() *string {
 	return &s
 }
 
+// readOptionalUint32Ptr reads an optional unsigned integer and returns a *uint32.
+// Returns nil if the field is absent.
+func (d *decoder) readOptionalUint32Ptr() *uint32 {
+	if d.isOptionalSkipped() {
+		return nil
+	}
+	v := d.readUnsigned()
+	if d.err != nil {
+		return nil
+	}
+	u := uint32(toUint64(v))
+	return &u
+}
+
 // readOptionalUint8Ptr reads an optional unsigned integer and returns a *uint8.
 // Returns nil if the field is absent.
 func (d *decoder) readOptionalUint8Ptr() *uint8 {
