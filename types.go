@@ -105,9 +105,9 @@ type ProfileObjPeriodEntry struct {
 // Message tag constants for SML message body types.
 const (
 	tagOpenResponse             uint32 = 0x00000101
-	tagCloseResponse            uint32 = 0x0000020b
+	tagCloseResponse            uint32 = 0x00000201
 	tagGetProfilePackResponse   uint32 = 0x00000301
-	tagGetProfileListResponse   uint32 = 0x00000701
+	tagGetProfileListResponse   uint32 = 0x00000401
 	tagGetProcParameterResponse uint32 = 0x00000501
 	tagGetListResponse          uint32 = 0x00000701
 	tagAttentionResponse        uint32 = 0x0000ff01
