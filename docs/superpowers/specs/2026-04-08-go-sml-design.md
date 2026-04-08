@@ -98,29 +98,31 @@ type AttentionResponse struct {
 
 type GetProcParameterResponse struct {
     ServerID      []byte
-    TreePath      []byte
-    ParameterTree *TreeEntry
+    TreePath      TreePath   // flat path of OBIS identifiers
+    ParameterTree *TreeEntry // recursive parameter tree
 }
 
 type GetProfileListResponse struct {
-    ServerID       []byte
-    ActTime        *Time
-    RegPeriod      *uint32
-    ParameterTree  *TreeEntry
-    ValList        []PeriodEntry
-    RawData        []byte
-    Signature      []byte
+    ServerID        []byte
+    ActTime         *Time
+    RegPeriod       *uint32
+    ParameterTreePath TreePath  // flat path, not a recursive tree
+    ValTime         *Time
+    Status          *uint64
+    ValList         []PeriodEntry
+    RawData         []byte
+    PeriodSignature []byte
 }
 
 type GetProfilePackResponse struct {
-    ServerID       []byte
-    ActTime        *Time
-    RegPeriod      *uint32
-    ParameterTree  *TreeEntry
-    HeaderList     []ProfileObjHeaderEntry
-    PeriodList     []ProfileObjPeriodEntry
-    RawData        []byte
-    Signature      []byte
+    ServerID          []byte
+    ActTime           *Time
+    RegPeriod         *uint32
+    ParameterTreePath TreePath  // flat path, not a recursive tree
+    HeaderList        []ProfileObjHeaderEntry
+    PeriodList        []ProfileObjPeriodEntry
+    RawData           []byte
+    PeriodSignature   []byte
 }
 ```
 
@@ -165,11 +167,27 @@ The specific integer size is preserved from the wire encoding (matters for compa
 
 ### Time
 
+Tagged choice — exactly one variant is represented.
+
 ```go
 type Time struct {
-    Seconds   *uint32  // SML_TIME_SEC_INDEX (tag 0x01)
-    Timestamp *uint32  // SML_TIME_TIMESTAMP (tag 0x02)
+    Tag   uint8   // 0x01 = SecIndex, 0x02 = Timestamp
+    Value uint32
 }
+
+const (
+    TimeSecIndex  uint8 = 0x01
+    TimeTimestamp uint8 = 0x02
+)
+```
+
+### TreePath
+
+Flat sequence of OBIS identifiers used in proc-parameter and profile requests. Distinct from TreeEntry (recursive).
+
+```go
+// TreePath is a flat path of OBIS code segments.
+type TreePath [][]byte
 ```
 
 ### TreeEntry
@@ -179,8 +197,40 @@ Recursive structure for parameter data.
 ```go
 type TreeEntry struct {
     ParameterName  []byte
-    ParameterValue Value
+    ParameterValue Value  // Note: simplified from C's sml_proc_par_value which can also hold period/tuple/time entries. If test data reveals non-Value variants, this will be revisited.
     Children       []TreeEntry
+}
+```
+
+### PeriodEntry
+
+Used in GetProfileListResponse.
+
+```go
+type PeriodEntry struct {
+    ObjName       []byte
+    Unit          *uint8
+    Scaler        *int8
+    Value         Value
+    Signature     []byte
+}
+```
+
+### ProfileObjHeaderEntry and ProfileObjPeriodEntry
+
+Used in GetProfilePackResponse.
+
+```go
+type ProfileObjHeaderEntry struct {
+    ObjName  []byte
+    Unit     *uint8
+    Scaler   *int8
+}
+
+type ProfileObjPeriodEntry struct {
+    ValTime    *Time
+    Status     *uint64
+    ValueList  []PeriodEntry
 }
 ```
 
@@ -190,6 +240,8 @@ type TreeEntry struct {
 - Binary data (`[]byte`) for OBIS codes, server IDs, signatures — not strings.
 - Slices instead of linked lists.
 - Value as interface + named types instead of tagged union struct — idiomatic Go type switch.
+- Parsed values own their backing memory — no shared buffers between the decoder and returned types. Safe to use after the decode call returns.
+- `OctetString` (`[]byte`) values are independent copies, not slices of the input buffer.
 
 ## TLV Decoder
 
@@ -243,10 +295,12 @@ type DecodeOptions struct {
     Strict bool // default: true — fail on first malformed message
 }
 
-func DecodeWithOptions(data []byte, opts DecodeOptions) (*File, []error)
+func DecodeWithOptions(data []byte, opts DecodeOptions) (*File, error)
 ```
 
-`Decode()` wraps `DecodeWithOptions` with `Strict: true`, returning the first error.
+`Decode()` wraps `DecodeWithOptions` with `Strict: true`.
+
+In non-strict mode, `DecodeWithOptions` returns partial results in `*File` and a combined error via `errors.Join`. Callers can unwrap individual errors with `errors.As`/`errors.Is`.
 
 ## Transport Layer
 
@@ -273,6 +327,8 @@ func NewReader(r io.Reader) *Reader
 // Returns io.EOF when the underlying reader is exhausted.
 func (r *Reader) Next() ([]byte, error)
 ```
+
+**Max frame size:** The reader enforces a default maximum frame size of 64KB to prevent unbounded memory growth on malformed streams. This is configurable but the default should be safe for all known meters (real frames are typically under 1KB).
 
 ### CRC Handling
 
@@ -306,11 +362,14 @@ func (f *File) Readings() []ListEntry
 For long-running meter reading sessions, using context for cancellation.
 
 ```go
-type Handler func(*File)
-type MessageHandler func(*Message)
+// Handler is called for each decoded SML file. Return non-nil error to stop listening.
+type Handler func(*File) error
+
+// MessageHandler is called for each message. Return non-nil error to stop listening.
+type MessageHandler func(*Message) error
 
 // Listen reads SML frames from r, decodes them, and calls handler for each file.
-// Blocks until r errors or ctx is cancelled.
+// Blocks until r errors, ctx is cancelled, or handler returns a non-nil error.
 func Listen(ctx context.Context, r io.Reader, handler Handler) error
 
 // ListenMessages calls handler per-message rather than per-file.
@@ -319,9 +378,11 @@ func ListenMessages(ctx context.Context, r io.Reader, handler MessageHandler) er
 
 `Listen` composes `transport.NewReader` + `sml.Decode` internally.
 
+**Error resilience:** When a single frame fails CRC or decoding, `Listen` skips it and continues reading the next frame. Only fatal errors (io.Reader failure, context cancellation, handler error) stop the loop. Skipped frame errors are not surfaced — for long-running serial sessions, transient corruption is expected and should not kill the listener.
+
 ## DLMS Units
 
-Lookup table mapping unit codes to strings per ISO EN 62056-62. Stored as a package-level `var` or `const` block in `units.go`. Covers the standard set (~70 units: Wh, kWh, W, V, A, Hz, var, etc.).
+Lookup table mapping unit codes to strings per ISO EN 62056-62. Implemented as a `[256]string` array indexed by unit code for zero-allocation lookup. Covers the standard set (~70 units: Wh, kWh, W, V, A, Hz, var, etc.).
 
 ## Meter Quirks
 
@@ -355,7 +416,6 @@ github.com/databus23/go-sml/
 ├── integration_test.go
 ├── fuzz_test.go
 ├── go.mod
-└── go.sum
 ```
 
 ## Testing Strategy
@@ -377,7 +437,7 @@ github.com/databus23/go-sml/
 ### Tier 3: Fuzz Testing
 
 - Go native fuzzing (`testing.F`) with `.bin` files as seed corpus.
-- Targets: `sml.Decode()` and `transport.Reader` — must never panic on any input.
+- Targets: `sml.Decode()`, `transport.Reader`, and the internal TLV decoder — must never panic on any input.
 
 ### What We Don't Test
 
