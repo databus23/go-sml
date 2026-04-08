@@ -8,6 +8,27 @@ go get github.com/databus23/go-sml
 
 ## Quick Start
 
+### CLI tool
+
+A small command-line tool is included that prints readings in the same format
+as the C `sml_server`:
+
+```bash
+go install github.com/databus23/go-sml/cmd/smlreader@latest
+smlreader capture.bin
+# or from stdin:
+smlreader -
+```
+
+Output:
+
+```
+1-0:1.8.0*255#8391648.8#Wh
+1-0:15.7.0*255#163.5#W
+```
+
+### As a library
+
 Decode a raw SML payload and print all meter readings:
 
 ```go
