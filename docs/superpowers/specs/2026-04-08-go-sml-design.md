@@ -404,6 +404,7 @@ github.com/databus23/go-sml/
 ├── units.go            // DLMS unit table
 ├── transport/
 │   ├── transport.go    // Reader, NewReader, Next
+│   ├── transport_test.go
 │   ├── crc.go          // CRC16 DIN 62056-46 + Kermit
 │   └── escape.go       // Escape sequence processing
 ├── testdata/
@@ -411,8 +412,6 @@ github.com/databus23/go-sml/
 │   └── golden/
 │       └── *.txt       // Pre-generated sml_server output
 ├── sml_test.go
-├── transport/
-│   └── transport_test.go
 ├── integration_test.go
 ├── fuzz_test.go
 ├── go.mod
