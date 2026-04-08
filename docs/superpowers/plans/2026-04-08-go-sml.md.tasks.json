@@ -1,0 +1,22 @@
+{
+  "planPath": "docs/superpowers/plans/2026-04-08-go-sml.md",
+  "tasks": [
+    {"id": 0, "subject": "Task 0: Project Scaffold", "status": "pending"},
+    {"id": 1, "subject": "Task 1: TLV Decoder — Core Byte Reading", "status": "pending", "blockedBy": [0]},
+    {"id": 2, "subject": "Task 2: TLV Decoder — Primitive Type Readers", "status": "pending", "blockedBy": [1]},
+    {"id": 3, "subject": "Task 3: TLV Decoder — Compound Readers", "status": "pending", "blockedBy": [2]},
+    {"id": 4, "subject": "Task 4: Message Parsers — Open/Close Response", "status": "pending", "blockedBy": [3]},
+    {"id": 5, "subject": "Task 5: Message Parsers — GetListResponse", "status": "pending", "blockedBy": [3]},
+    {"id": 6, "subject": "Task 6: Message Parsers — Remaining Types", "status": "pending", "blockedBy": [3]},
+    {"id": 7, "subject": "Task 7: Top-Level Decode and DecodeWithOptions", "status": "pending", "blockedBy": [4, 5, 6]},
+    {"id": 8, "subject": "Task 8: CRC-16 Implementations", "status": "pending"},
+    {"id": 9, "subject": "Task 9: Transport Reader", "status": "pending", "blockedBy": [8]},
+    {"id": 10, "subject": "Task 10: DLMS Units Table", "status": "pending"},
+    {"id": 11, "subject": "Task 11: Convenience Methods", "status": "pending", "blockedBy": [7, 10]},
+    {"id": 12, "subject": "Task 12: Listen and ListenMessages", "status": "pending", "blockedBy": [7, 9]},
+    {"id": 13, "subject": "Task 13: Integration Test Data Setup", "status": "pending"},
+    {"id": 14, "subject": "Task 14: Integration Tests", "status": "pending", "blockedBy": [7, 9, 13]},
+    {"id": 15, "subject": "Task 15: Fuzz Tests", "status": "pending", "blockedBy": [14]}
+  ],
+  "lastUpdated": "2026-04-08T12:00:00Z"
+}
