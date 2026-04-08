@@ -8,7 +8,7 @@
     {"id": 4, "subject": "Task 4: Message Parsers — Open/Close Response", "status": "pending", "blockedBy": [3]},
     {"id": 5, "subject": "Task 5: Message Parsers — GetListResponse", "status": "pending", "blockedBy": [3]},
     {"id": 6, "subject": "Task 6: Message Parsers — Remaining Types", "status": "pending", "blockedBy": [3]},
-    {"id": 7, "subject": "Task 7: Top-Level Decode and DecodeWithOptions", "status": "pending", "blockedBy": [4, 5, 6]},
+    {"id": 7, "subject": "Task 7: Top-Level Decode and DecodeWithOptions", "status": "pending", "blockedBy": [4, 5]},
     {"id": 8, "subject": "Task 8: CRC-16 Implementations", "status": "pending"},
     {"id": 9, "subject": "Task 9: Transport Reader", "status": "pending", "blockedBy": [8]},
     {"id": 10, "subject": "Task 10: DLMS Units Table", "status": "pending"},
