@@ -728,3 +728,354 @@ func TestDecoderReadOptionalValue(t *testing.T) {
 		}
 	})
 }
+
+func TestDecoderReadTime(t *testing.T) {
+	t.Run("2-element list with tag and value", func(t *testing.T) {
+		// 0x72 = list of 2 elements
+		// 0x62 0x01 = u8(1) = TimeSecIndex
+		// 0x65 0x00 0x00 0x30 0x39 = u32(12345)
+		input := []byte{0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x30, 0x39}
+		d := newDecoder(input)
+		got := d.readTime()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got.Tag != TimeSecIndex {
+			t.Fatalf("Tag = %d, want %d (TimeSecIndex)", got.Tag, TimeSecIndex)
+		}
+		if got.Value != 12345 {
+			t.Fatalf("Value = %d, want 12345", got.Value)
+		}
+	})
+
+	t.Run("timestamp tag", func(t *testing.T) {
+		// 0x72 = list of 2
+		// 0x62 0x02 = u8(2) = TimeTimestamp
+		// 0x65 0x00 0x01 0x00 0x00 = u32(65536)
+		input := []byte{0x72, 0x62, 0x02, 0x65, 0x00, 0x01, 0x00, 0x00}
+		d := newDecoder(input)
+		got := d.readTime()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got.Tag != TimeTimestamp {
+			t.Fatalf("Tag = %d, want %d (TimeTimestamp)", got.Tag, TimeTimestamp)
+		}
+		if got.Value != 65536 {
+			t.Fatalf("Value = %d, want 65536", got.Value)
+		}
+	})
+}
+
+func TestDecoderReadTimeBareUnsigned(t *testing.T) {
+	t.Run("Holley workaround bare u32", func(t *testing.T) {
+		// A bare unsigned integer (no list wrapper). Peek byte 0x65 has type 0x60,
+		// not 0x70, so the Holley workaround treats it as SecIndex.
+		// 0x65 0x00 0x00 0x30 0x39 = u32(12345)
+		input := []byte{0x65, 0x00, 0x00, 0x30, 0x39}
+		d := newDecoder(input)
+		got := d.readTime()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got.Tag != TimeSecIndex {
+			t.Fatalf("Tag = %d, want %d (TimeSecIndex)", got.Tag, TimeSecIndex)
+		}
+		if got.Value != 12345 {
+			t.Fatalf("Value = %d, want 12345", got.Value)
+		}
+	})
+
+	t.Run("Holley workaround bare u16", func(t *testing.T) {
+		// 0x63 0x00 0x64 = u16(100)
+		input := []byte{0x63, 0x00, 0x64}
+		d := newDecoder(input)
+		got := d.readTime()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got.Tag != TimeSecIndex {
+			t.Fatalf("Tag = %d, want %d (TimeSecIndex)", got.Tag, TimeSecIndex)
+		}
+		if got.Value != 100 {
+			t.Fatalf("Value = %d, want 100", got.Value)
+		}
+	})
+}
+
+func TestDecoderReadTreePath(t *testing.T) {
+	t.Run("list of 3 octet strings", func(t *testing.T) {
+		// 0x73 = list of 3
+		// 0x03 0x01 0x02 = octet string [0x01, 0x02]
+		// 0x03 0x03 0x04 = octet string [0x03, 0x04]
+		// 0x03 0x05 0x06 = octet string [0x05, 0x06]
+		input := []byte{
+			0x73,
+			0x03, 0x01, 0x02,
+			0x03, 0x03, 0x04,
+			0x03, 0x05, 0x06,
+		}
+		d := newDecoder(input)
+		got := d.readTreePath()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("len = %d, want 3", len(got))
+		}
+		want := TreePath{
+			{0x01, 0x02},
+			{0x03, 0x04},
+			{0x05, 0x06},
+		}
+		for i := range want {
+			if !bytes.Equal(got[i], want[i]) {
+				t.Fatalf("got[%d] = %X, want %X", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		// 0x70 = list of 0 elements (but that's unusual; let's test the boundary)
+		// Actually 0x70 encodes type=0x70, length=0. This is valid.
+		d := newDecoder([]byte{0x70})
+		got := d.readTreePath()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("len = %d, want 0", len(got))
+		}
+	})
+}
+
+func TestDecoderReadTreeEntry(t *testing.T) {
+	t.Run("leaf entry with no children", func(t *testing.T) {
+		// 0x73 = list of 3
+		// parameter_name: 0x03 0xAA 0xBB (octet string [0xAA, 0xBB])
+		// parameter_value: 0x62 0x2A (u8(42))
+		// child_list: 0x01 (optional absent)
+		input := []byte{
+			0x73,
+			0x03, 0xAA, 0xBB,
+			0x62, 0x2A,
+			0x01,
+		}
+		d := newDecoder(input)
+		got := d.readTreeEntry()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if !bytes.Equal(got.ParameterName, []byte{0xAA, 0xBB}) {
+			t.Fatalf("ParameterName = %X, want AABB", got.ParameterName)
+		}
+		if got.ParameterValue != Uint8(42) {
+			t.Fatalf("ParameterValue = %v (%T), want Uint8(42)", got.ParameterValue, got.ParameterValue)
+		}
+		if got.Children != nil {
+			t.Fatalf("Children = %v, want nil", got.Children)
+		}
+	})
+
+	t.Run("entry with children", func(t *testing.T) {
+		// Parent: list of 3
+		//   parameter_name: 0x03 0x01 0x02
+		//   parameter_value: 0x01 (optional absent)
+		//   child_list: list of 1 child
+		//     child: list of 3
+		//       parameter_name: 0x03 0x03 0x04
+		//       parameter_value: 0x62 0xFF
+		//       child_list: 0x01 (optional absent)
+		input := []byte{
+			0x73,             // parent list of 3
+			0x03, 0x01, 0x02, // parameter_name
+			0x01,             // parameter_value (absent)
+			0x71,             // child_list: list of 1
+			0x73,             // child: list of 3
+			0x03, 0x03, 0x04, // child parameter_name
+			0x62, 0xFF, // child parameter_value u8(255)
+			0x01, // child child_list (absent)
+		}
+		d := newDecoder(input)
+		got := d.readTreeEntry()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if !bytes.Equal(got.ParameterName, []byte{0x01, 0x02}) {
+			t.Fatalf("ParameterName = %X, want 0102", got.ParameterName)
+		}
+		if got.ParameterValue != nil {
+			t.Fatalf("ParameterValue = %v, want nil", got.ParameterValue)
+		}
+		if len(got.Children) != 1 {
+			t.Fatalf("len(Children) = %d, want 1", len(got.Children))
+		}
+		child := got.Children[0]
+		if !bytes.Equal(child.ParameterName, []byte{0x03, 0x04}) {
+			t.Fatalf("child.ParameterName = %X, want 0304", child.ParameterName)
+		}
+		if child.ParameterValue != Uint8(255) {
+			t.Fatalf("child.ParameterValue = %v (%T), want Uint8(255)", child.ParameterValue, child.ParameterValue)
+		}
+		if child.Children != nil {
+			t.Fatalf("child.Children = %v, want nil", child.Children)
+		}
+	})
+}
+
+func TestDecoderReadOptionalTime(t *testing.T) {
+	t.Run("skipped returns nil", func(t *testing.T) {
+		d := newDecoder([]byte{0x01})
+		got := d.readOptionalTime()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got != nil {
+			t.Fatalf("got %v, want nil for skipped optional", got)
+		}
+	})
+
+	t.Run("present returns time", func(t *testing.T) {
+		// Normal 2-element list time
+		input := []byte{0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x30, 0x39}
+		d := newDecoder(input)
+		got := d.readOptionalTime()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil Time")
+		}
+		if got.Tag != TimeSecIndex {
+			t.Fatalf("Tag = %d, want %d", got.Tag, TimeSecIndex)
+		}
+		if got.Value != 12345 {
+			t.Fatalf("Value = %d, want 12345", got.Value)
+		}
+	})
+}
+
+func TestDecoderReadOptionalUnsignedPtr(t *testing.T) {
+	t.Run("skipped returns nil", func(t *testing.T) {
+		d := newDecoder([]byte{0x01})
+		got := d.readOptionalUnsignedPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got != nil {
+			t.Fatalf("got %v, want nil for skipped optional", *got)
+		}
+	})
+
+	t.Run("present u8 returns pointer", func(t *testing.T) {
+		d := newDecoder([]byte{0x62, 0x2A})
+		got := d.readOptionalUnsignedPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil")
+		}
+		if *got != 42 {
+			t.Fatalf("got %d, want 42", *got)
+		}
+	})
+
+	t.Run("present u32 returns pointer", func(t *testing.T) {
+		d := newDecoder([]byte{0x65, 0x00, 0x01, 0x00, 0x00})
+		got := d.readOptionalUnsignedPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil")
+		}
+		if *got != 65536 {
+			t.Fatalf("got %d, want 65536", *got)
+		}
+	})
+}
+
+func TestDecoderReadOptionalSignedPtr(t *testing.T) {
+	t.Run("skipped returns nil", func(t *testing.T) {
+		d := newDecoder([]byte{0x01})
+		got := d.readOptionalSignedPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got != nil {
+			t.Fatalf("got %v, want nil for skipped optional", *got)
+		}
+	})
+
+	t.Run("present i8 returns pointer", func(t *testing.T) {
+		// 0x52 0xFF = Int8(-1)
+		d := newDecoder([]byte{0x52, 0xFF})
+		got := d.readOptionalSignedPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil")
+		}
+		if *got != -1 {
+			t.Fatalf("got %d, want -1", *got)
+		}
+	})
+}
+
+func TestDecoderReadOptionalStringPtr(t *testing.T) {
+	t.Run("skipped returns nil", func(t *testing.T) {
+		d := newDecoder([]byte{0x01})
+		got := d.readOptionalStringPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got != nil {
+			t.Fatalf("got %v, want nil for skipped optional", *got)
+		}
+	})
+
+	t.Run("present returns pointer", func(t *testing.T) {
+		// 0x04 0x41 0x42 0x43 = octet string "ABC"
+		d := newDecoder([]byte{0x04, 0x41, 0x42, 0x43})
+		got := d.readOptionalStringPtr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil")
+		}
+		if *got != "ABC" {
+			t.Fatalf("got %q, want %q", *got, "ABC")
+		}
+	})
+}
+
+func TestDecoderReadOptionalUint8Ptr(t *testing.T) {
+	t.Run("skipped returns nil", func(t *testing.T) {
+		d := newDecoder([]byte{0x01})
+		got := d.readOptionalUint8Ptr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got != nil {
+			t.Fatalf("got %v, want nil for skipped optional", *got)
+		}
+	})
+
+	t.Run("present returns pointer", func(t *testing.T) {
+		// 0x62 0x03 = u8(3)
+		d := newDecoder([]byte{0x62, 0x03})
+		got := d.readOptionalUint8Ptr()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil")
+		}
+		if *got != 3 {
+			t.Fatalf("got %d, want 3", *got)
+		}
+	})
+}

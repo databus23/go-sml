@@ -267,3 +267,174 @@ func (d *decoder) readOptionalValue() Value {
 	}
 	return d.readValue()
 }
+
+// readTime reads an SML Time structure. The standard encoding is a 2-element
+// list (tag + value). As a workaround for Holley DTZ541 meters, a bare unsigned
+// integer (no list wrapper) is also accepted and treated as TimeSecIndex.
+func (d *decoder) readTime() Time {
+	if d.err != nil {
+		return Time{}
+	}
+	// Peek at the current byte to determine encoding variant.
+	if d.pos >= len(d.buf) {
+		d.err = io.ErrUnexpectedEOF
+		return Time{}
+	}
+	typ := d.buf[d.pos] & 0x70
+	if typ == 0x70 {
+		// Standard: 2-element list
+		_ = d.readListLength()
+		tag := d.readUnsigned()
+		val := d.readUnsigned()
+		if d.err != nil {
+			return Time{}
+		}
+		return Time{Tag: uint8(tag.(Uint8)), Value: uint32(toUint64(val))}
+	}
+	// Holley workaround: bare unsigned
+	val := d.readUnsigned()
+	if d.err != nil {
+		return Time{}
+	}
+	return Time{Tag: TimeSecIndex, Value: uint32(toUint64(val))}
+}
+
+// readOptionalTime reads an optional Time. Returns nil if skipped.
+func (d *decoder) readOptionalTime() *Time {
+	if d.isOptionalSkipped() {
+		return nil
+	}
+	t := d.readTime()
+	if d.err != nil {
+		return nil
+	}
+	return &t
+}
+
+// readTreePath reads a list of octet strings representing a tree path.
+func (d *decoder) readTreePath() TreePath {
+	n := d.readListLength()
+	if d.err != nil {
+		return nil
+	}
+	path := make(TreePath, n)
+	for i := range path {
+		path[i] = d.readOctetString()
+	}
+	return path
+}
+
+// readTreeEntry reads a recursive 3-element tree entry (parameter_name,
+// parameter_value, child_list).
+func (d *decoder) readTreeEntry() TreeEntry {
+	_ = d.readListLength()
+	name := d.readOctetString()
+	value := d.readOptionalValue()
+	var children []TreeEntry
+	if !d.isOptionalSkipped() {
+		n := d.readListLength()
+		if d.err != nil {
+			return TreeEntry{}
+		}
+		children = make([]TreeEntry, n)
+		for i := range children {
+			children[i] = d.readTreeEntry()
+		}
+	}
+	if d.err != nil {
+		return TreeEntry{}
+	}
+	return TreeEntry{
+		ParameterName:  name,
+		ParameterValue: value,
+		Children:       children,
+	}
+}
+
+// readOptionalUnsignedPtr reads an optional unsigned integer and returns a
+// *uint64. Returns nil if the field is absent.
+func (d *decoder) readOptionalUnsignedPtr() *uint64 {
+	if d.isOptionalSkipped() {
+		return nil
+	}
+	v := d.readUnsigned()
+	if d.err != nil {
+		return nil
+	}
+	u := toUint64(v)
+	return &u
+}
+
+// readOptionalSignedPtr reads an optional signed integer and returns a *int8.
+// Returns nil if the field is absent.
+func (d *decoder) readOptionalSignedPtr() *int8 {
+	if d.isOptionalSkipped() {
+		return nil
+	}
+	v := d.readSigned()
+	if d.err != nil {
+		return nil
+	}
+	s := toInt8(v)
+	return &s
+}
+
+// readOptionalStringPtr reads an optional octet string and returns it as a
+// *string. Returns nil if the field is absent.
+func (d *decoder) readOptionalStringPtr() *string {
+	if d.isOptionalSkipped() {
+		return nil
+	}
+	b := d.readOctetString()
+	if d.err != nil {
+		return nil
+	}
+	s := string(b)
+	return &s
+}
+
+// readOptionalUint8Ptr reads an optional unsigned integer and returns a *uint8.
+// Returns nil if the field is absent.
+func (d *decoder) readOptionalUint8Ptr() *uint8 {
+	if d.isOptionalSkipped() {
+		return nil
+	}
+	v := d.readUnsigned()
+	if d.err != nil {
+		return nil
+	}
+	u := uint8(toUint64(v))
+	return &u
+}
+
+// toUint64 converts any concrete unsigned Value to uint64.
+func toUint64(v Value) uint64 {
+	switch v := v.(type) {
+	case Uint8:
+		return uint64(v)
+	case Uint16:
+		return uint64(v)
+	case Uint32:
+		return uint64(v)
+	case Uint64:
+		return uint64(v)
+	default:
+		return 0
+	}
+}
+
+// toInt8 converts any concrete signed Value to int8.
+func toInt8(v Value) int8 {
+	switch v := v.(type) {
+	case Int8:
+		return int8(v)
+	case Int16:
+		return int8(v)
+	case Int32:
+		return int8(v)
+	case Int64:
+		return int8(v)
+	default:
+		return 0
+	}
+}
