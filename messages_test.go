@@ -111,6 +111,358 @@ func TestParseOpenResponse(t *testing.T) {
 	})
 }
 
+func TestParseListEntry(t *testing.T) {
+	t.Run("all fields present", func(t *testing.T) {
+		// 7-element list: 0x77
+		// obj_name:  0x07 0x01 0x00 0x01 0x08 0x00 0xFF  (TL=0x07 → 6 bytes, OBIS 1-0:1.8.0*255)
+		// status:    0x65 0x00 0x01 0xE2 0x40            (unsigned u32, 4 bytes, value=123456)
+		// val_time:  0x72 0x62 0x01 0x65 0x00 0x00 0x30 0x39 (2-element list, SecIndex=12345)
+		// unit:      0x62 0x1E                            (unsigned u8, value=30=Wh)
+		// scaler:    0x52 0xFE                            (signed i8, value=-2)
+		// value:     0x65 0x00 0x01 0xE2 0x40             (unsigned u32, value=123456)
+		// signature: 0x01                                 (absent)
+		input := []byte{
+			0x77,                                     // list of 7
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF, // obj_name: 6 bytes
+			0x65, 0x00, 0x01, 0xE2, 0x40,            // status: u32=123456
+			0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x30, 0x39, // val_time: SecIndex=12345
+			0x62, 0x1E,                              // unit: u8=30
+			0x52, 0xFE,                              // scaler: i8=-2
+			0x65, 0x00, 0x01, 0xE2, 0x40,            // value: u32=123456
+			0x01,                                    // signature: absent
+		}
+		d := newDecoder(input)
+		got := d.readListEntry()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+
+		wantObjName := []byte{0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}
+		if !bytes.Equal(got.ObjName, wantObjName) {
+			t.Fatalf("ObjName = %X, want %X", got.ObjName, wantObjName)
+		}
+
+		if got.Status == nil {
+			t.Fatal("Status = nil, want non-nil")
+		}
+		if *got.Status != 123456 {
+			t.Fatalf("Status = %d, want 123456", *got.Status)
+		}
+
+		if got.ValTime == nil {
+			t.Fatal("ValTime = nil, want non-nil")
+		}
+		if got.ValTime.Tag != TimeSecIndex {
+			t.Fatalf("ValTime.Tag = %d, want %d (TimeSecIndex)", got.ValTime.Tag, TimeSecIndex)
+		}
+		if got.ValTime.Value != 12345 {
+			t.Fatalf("ValTime.Value = %d, want 12345", got.ValTime.Value)
+		}
+
+		if got.Unit == nil {
+			t.Fatal("Unit = nil, want non-nil")
+		}
+		if *got.Unit != 30 {
+			t.Fatalf("Unit = %d, want 30", *got.Unit)
+		}
+
+		if got.Scaler == nil {
+			t.Fatal("Scaler = nil, want non-nil")
+		}
+		if *got.Scaler != -2 {
+			t.Fatalf("Scaler = %d, want -2", *got.Scaler)
+		}
+
+		if got.Value == nil {
+			t.Fatal("Value = nil, want non-nil")
+		}
+		if got.Value != Uint32(123456) {
+			t.Fatalf("Value = %v, want Uint32(123456)", got.Value)
+		}
+
+		if got.Signature != nil {
+			t.Fatalf("Signature = %v, want nil", got.Signature)
+		}
+	})
+
+	t.Run("all optional fields absent", func(t *testing.T) {
+		// 7-element list: 0x77
+		// obj_name:  0x05 0xAA 0xBB 0xCC 0xDD  (TL=0x05 → 4 bytes)
+		// status:    0x01 (absent)
+		// val_time:  0x01 (absent)
+		// unit:      0x01 (absent)
+		// scaler:    0x01 (absent)
+		// value:     0x01 (absent)
+		// signature: 0x01 (absent)
+		input := []byte{
+			0x77,                         // list of 7
+			0x05, 0xAA, 0xBB, 0xCC, 0xDD, // obj_name: 4 bytes
+			0x01,                         // status: absent
+			0x01,                         // val_time: absent
+			0x01,                         // unit: absent
+			0x01,                         // scaler: absent
+			0x01,                         // value: absent
+			0x01,                         // signature: absent
+		}
+		d := newDecoder(input)
+		got := d.readListEntry()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+
+		wantObjName := []byte{0xAA, 0xBB, 0xCC, 0xDD}
+		if !bytes.Equal(got.ObjName, wantObjName) {
+			t.Fatalf("ObjName = %X, want %X", got.ObjName, wantObjName)
+		}
+		if got.Status != nil {
+			t.Fatalf("Status = %v, want nil", *got.Status)
+		}
+		if got.ValTime != nil {
+			t.Fatalf("ValTime = %v, want nil", got.ValTime)
+		}
+		if got.Unit != nil {
+			t.Fatalf("Unit = %v, want nil", *got.Unit)
+		}
+		if got.Scaler != nil {
+			t.Fatalf("Scaler = %v, want nil", *got.Scaler)
+		}
+		if got.Value != nil {
+			t.Fatalf("Value = %v, want nil", got.Value)
+		}
+		if got.Signature != nil {
+			t.Fatalf("Signature = %v, want nil", got.Signature)
+		}
+	})
+}
+
+func TestParseGetListResponse(t *testing.T) {
+	t.Run("two entries, optionals mixed", func(t *testing.T) {
+		// GetListResponse = 7-element list (0x77)
+		// client_id:       0x01 (absent)
+		// server_id:       0x05 0x0A 0x0B 0x0C 0x0D  (4 bytes)
+		// list_name:       0x04 0x4C 0x4E 0x41       (3 bytes "LNA")
+		// act_sensor_time: 0x72 0x62 0x01 0x65 0x00 0x00 0x07 0xD0 (SecIndex=2000)
+		// val_list:        0x72 followed by two 0x77 entries
+		//   entry 1 (all fields):
+		//     obj_name:  0x07 0x01 0x00 0x01 0x08 0x00 0xFF
+		//     status:    0x65 0x00 0x01 0xE2 0x40  (u32=123456)
+		//     val_time:  0x01 (absent)
+		//     unit:      0x62 0x1E (u8=30)
+		//     scaler:    0x52 0xFE (i8=-2)
+		//     value:     0x65 0x00 0x01 0xE2 0x40  (u32=123456)
+		//     signature: 0x01 (absent)
+		//   entry 2 (minimal):
+		//     obj_name:  0x05 0xAA 0xBB 0xCC 0xDD
+		//     status:    0x01 (absent)
+		//     val_time:  0x01 (absent)
+		//     unit:      0x01 (absent)
+		//     scaler:    0x01 (absent)
+		//     value:     0x01 (absent)
+		//     signature: 0x01 (absent)
+		// list_signature:  0x01 (absent)
+		// act_gateway_time:0x01 (absent)
+		input := []byte{
+			0x77,                               // GetListResponse list of 7
+			0x01,                               // client_id: absent
+			0x05, 0x0A, 0x0B, 0x0C, 0x0D,      // server_id: 4 bytes
+			0x04, 0x4C, 0x4E, 0x41,            // list_name: "LNA"
+			0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x07, 0xD0, // act_sensor_time: SecIndex=2000
+			// val_list: 2-element list
+			0x72,
+			// entry 1 (7 fields)
+			0x77,
+			0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF, // obj_name
+			0x65, 0x00, 0x01, 0xE2, 0x40,              // status: u32=123456
+			0x01,                                       // val_time: absent
+			0x62, 0x1E,                                 // unit: u8=30
+			0x52, 0xFE,                                 // scaler: i8=-2
+			0x65, 0x00, 0x01, 0xE2, 0x40,              // value: u32=123456
+			0x01,                                       // signature: absent
+			// entry 2 (minimal)
+			0x77,
+			0x05, 0xAA, 0xBB, 0xCC, 0xDD,              // obj_name: 4 bytes
+			0x01,                                       // status: absent
+			0x01,                                       // val_time: absent
+			0x01,                                       // unit: absent
+			0x01,                                       // scaler: absent
+			0x01,                                       // value: absent
+			0x01,                                       // signature: absent
+			// list_signature: absent
+			0x01,
+			// act_gateway_time: absent
+			0x01,
+		}
+		d := newDecoder(input)
+		got := d.readGetListResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetListResponse")
+		}
+
+		if got.ClientID != nil {
+			t.Fatalf("ClientID = %v, want nil", got.ClientID)
+		}
+
+		wantServerID := []byte{0x0A, 0x0B, 0x0C, 0x0D}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		wantListName := []byte{0x4C, 0x4E, 0x41}
+		if !bytes.Equal(got.ListName, wantListName) {
+			t.Fatalf("ListName = %X, want %X", got.ListName, wantListName)
+		}
+
+		if got.ActSensorTime == nil {
+			t.Fatal("ActSensorTime = nil, want non-nil")
+		}
+		if got.ActSensorTime.Tag != TimeSecIndex {
+			t.Fatalf("ActSensorTime.Tag = %d, want %d", got.ActSensorTime.Tag, TimeSecIndex)
+		}
+		if got.ActSensorTime.Value != 2000 {
+			t.Fatalf("ActSensorTime.Value = %d, want 2000", got.ActSensorTime.Value)
+		}
+
+		if len(got.ValList) != 2 {
+			t.Fatalf("len(ValList) = %d, want 2", len(got.ValList))
+		}
+
+		e1 := got.ValList[0]
+		wantOBIS := []byte{0x01, 0x00, 0x01, 0x08, 0x00, 0xFF}
+		if !bytes.Equal(e1.ObjName, wantOBIS) {
+			t.Fatalf("ValList[0].ObjName = %X, want %X", e1.ObjName, wantOBIS)
+		}
+		if e1.Status == nil {
+			t.Fatal("ValList[0].Status = nil, want non-nil")
+		}
+		if *e1.Status != 123456 {
+			t.Fatalf("ValList[0].Status = %d, want 123456", *e1.Status)
+		}
+		if e1.ValTime != nil {
+			t.Fatalf("ValList[0].ValTime = %v, want nil", e1.ValTime)
+		}
+		if e1.Unit == nil {
+			t.Fatal("ValList[0].Unit = nil, want non-nil")
+		}
+		if *e1.Unit != 30 {
+			t.Fatalf("ValList[0].Unit = %d, want 30", *e1.Unit)
+		}
+		if e1.Scaler == nil {
+			t.Fatal("ValList[0].Scaler = nil, want non-nil")
+		}
+		if *e1.Scaler != -2 {
+			t.Fatalf("ValList[0].Scaler = %d, want -2", *e1.Scaler)
+		}
+		if e1.Value != Uint32(123456) {
+			t.Fatalf("ValList[0].Value = %v, want Uint32(123456)", e1.Value)
+		}
+		if e1.Signature != nil {
+			t.Fatalf("ValList[0].Signature = %v, want nil", e1.Signature)
+		}
+
+		e2 := got.ValList[1]
+		wantObjName2 := []byte{0xAA, 0xBB, 0xCC, 0xDD}
+		if !bytes.Equal(e2.ObjName, wantObjName2) {
+			t.Fatalf("ValList[1].ObjName = %X, want %X", e2.ObjName, wantObjName2)
+		}
+		if e2.Status != nil {
+			t.Fatalf("ValList[1].Status = %v, want nil", *e2.Status)
+		}
+		if e2.Value != nil {
+			t.Fatalf("ValList[1].Value = %v, want nil", e2.Value)
+		}
+
+		if got.Signature != nil {
+			t.Fatalf("Signature = %v, want nil", got.Signature)
+		}
+		if got.ActGatewayTime != nil {
+			t.Fatalf("ActGatewayTime = %v, want nil", got.ActGatewayTime)
+		}
+	})
+
+	t.Run("client_id and act_gateway_time present", func(t *testing.T) {
+		// GetListResponse = 7-element list (0x77)
+		// client_id:       0x03 0x11 0x22  (2 bytes)
+		// server_id:       0x03 0x33 0x44  (2 bytes)
+		// list_name:       0x01 (absent)
+		// act_sensor_time: 0x01 (absent)
+		// val_list:        0x71 followed by one 0x77 entry
+		//   entry (minimal):
+		//     obj_name:  0x03 0x55 0x66   (2 bytes)
+		//     status..signature: all 0x01
+		// list_signature:  0x03 0xDE 0xAD  (2 bytes)
+		// act_gateway_time:0x72 0x62 0x01 0x65 0x00 0x00 0x13 0x88 (SecIndex=5000)
+		input := []byte{
+			0x77,                               // GetListResponse list of 7
+			0x03, 0x11, 0x22,                   // client_id: 2 bytes
+			0x03, 0x33, 0x44,                   // server_id: 2 bytes
+			0x01,                               // list_name: absent
+			0x01,                               // act_sensor_time: absent
+			// val_list: 1-element list
+			0x71,
+			// entry (minimal)
+			0x77,
+			0x03, 0x55, 0x66,                   // obj_name: 2 bytes
+			0x01,                               // status: absent
+			0x01,                               // val_time: absent
+			0x01,                               // unit: absent
+			0x01,                               // scaler: absent
+			0x01,                               // value: absent
+			0x01,                               // signature: absent
+			// list_signature: 2 bytes
+			0x03, 0xDE, 0xAD,
+			// act_gateway_time: SecIndex=5000
+			0x72, 0x62, 0x01, 0x65, 0x00, 0x00, 0x13, 0x88,
+		}
+		d := newDecoder(input)
+		got := d.readGetListResponse()
+		if d.err != nil {
+			t.Fatalf("unexpected error: %v", d.err)
+		}
+		if got == nil {
+			t.Fatal("got nil, want non-nil GetListResponse")
+		}
+
+		wantClientID := []byte{0x11, 0x22}
+		if !bytes.Equal(got.ClientID, wantClientID) {
+			t.Fatalf("ClientID = %X, want %X", got.ClientID, wantClientID)
+		}
+
+		wantServerID := []byte{0x33, 0x44}
+		if !bytes.Equal(got.ServerID, wantServerID) {
+			t.Fatalf("ServerID = %X, want %X", got.ServerID, wantServerID)
+		}
+
+		if got.ListName != nil {
+			t.Fatalf("ListName = %v, want nil", got.ListName)
+		}
+		if got.ActSensorTime != nil {
+			t.Fatalf("ActSensorTime = %v, want nil", got.ActSensorTime)
+		}
+
+		if len(got.ValList) != 1 {
+			t.Fatalf("len(ValList) = %d, want 1", len(got.ValList))
+		}
+
+		wantSig := []byte{0xDE, 0xAD}
+		if !bytes.Equal(got.Signature, wantSig) {
+			t.Fatalf("Signature = %X, want %X", got.Signature, wantSig)
+		}
+
+		if got.ActGatewayTime == nil {
+			t.Fatal("ActGatewayTime = nil, want non-nil")
+		}
+		if got.ActGatewayTime.Tag != TimeSecIndex {
+			t.Fatalf("ActGatewayTime.Tag = %d, want %d", got.ActGatewayTime.Tag, TimeSecIndex)
+		}
+		if got.ActGatewayTime.Value != 5000 {
+			t.Fatalf("ActGatewayTime.Value = %d, want 5000", got.ActGatewayTime.Value)
+		}
+	})
+}
+
 func TestParseCloseResponse(t *testing.T) {
 	t.Run("signature absent", func(t *testing.T) {
 		// 0x71 = list of 1 element
