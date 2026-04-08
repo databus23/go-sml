@@ -24,17 +24,21 @@ type Value interface {
 	smlValue()
 }
 
-// Concrete Value types — named types preserve wire encoding size.
-type OctetString []byte
-type Bool bool
-type Int8 int8
-type Int16 int16
-type Int32 int32
-type Int64 int64
-type Uint8 uint8
-type Uint16 uint16
-type Uint32 uint32
-type Uint64 uint64
+// Concrete Value types. Named types preserve the wire encoding size so callers
+// can distinguish between e.g. a 1-byte and a 4-byte unsigned integer via a
+// type switch on Value.
+type (
+	OctetString []byte // OctetString is a raw byte sequence.
+	Bool        bool   // Bool is an SML boolean value.
+	Int8        int8   // Int8 is a 1-byte signed integer.
+	Int16       int16  // Int16 is a 2-byte signed integer.
+	Int32       int32  // Int32 is a 4-byte signed integer.
+	Int64       int64  // Int64 is an 8-byte signed integer.
+	Uint8       uint8  // Uint8 is a 1-byte unsigned integer.
+	Uint16      uint16 // Uint16 is a 2-byte unsigned integer.
+	Uint32      uint32 // Uint32 is a 4-byte unsigned integer.
+	Uint64      uint64 // Uint64 is an 8-byte unsigned integer.
+)
 
 func (OctetString) smlValue() {}
 func (Bool) smlValue()        {}
@@ -54,8 +58,8 @@ type Time struct {
 }
 
 const (
-	TimeSecIndex  uint8 = 0x01
-	TimeTimestamp uint8 = 0x02
+	TimeSecIndex  uint8 = 0x01 // TimeSecIndex indicates the value is a seconds index (secIndex).
+	TimeTimestamp uint8 = 0x02 // TimeTimestamp indicates the value is a UNIX timestamp.
 )
 
 // TreePath is a flat path of OBIS code segments.
