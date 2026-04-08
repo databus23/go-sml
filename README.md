@@ -205,7 +205,7 @@ docker run --rm -v "$(pwd)":/work -w /work gcc:latest bash -c '
 
 ## License
 
-TODO
+Apache License 2.0 — see [LICENSE](LICENSE).
 
 ## Acknowledgements
 
