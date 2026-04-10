@@ -109,6 +109,194 @@ func TestUnitString(t *testing.T) {
 	})
 }
 
+func TestToInt64(t *testing.T) {
+	tests := []struct {
+		name string
+		val  Value
+		want int64
+		ok   bool
+	}{
+		{"Int8", Int8(-42), -42, true},
+		{"Int16", Int16(-1000), -1000, true},
+		{"Int32", Int32(-100000), -100000, true},
+		{"Int64", Int64(-9999999999), -9999999999, true},
+		{"Uint8", Uint8(255), 255, true},
+		{"Uint16", Uint16(65535), 65535, true},
+		{"Uint32", Uint32(4294967295), 4294967295, true},
+		{"Uint64", Uint64(1234567890), 1234567890, true},
+		{"OctetString returns false", OctetString("hello"), 0, false},
+		{"Bool returns false", Bool(true), 0, false},
+		{"nil returns false", nil, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ToInt64(tt.val)
+			if ok != tt.ok {
+				t.Fatalf("ToInt64() ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Errorf("ToInt64() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatReadingValue(t *testing.T) {
+	scaler := func(s int8) *int8 { return &s }
+	unit := func(u uint8) *uint8 { return &u }
+
+	t.Run("numeric value with scaler and unit", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 1, 8, 0, 255},
+			Unit:    unit(30),
+			Scaler:  scaler(-1),
+			Value:   Uint32(9876),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:1.8.0*255#987.6#Wh"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("numeric value with zero scaler", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 2, 8, 0, 255},
+			Unit:    unit(30),
+			Scaler:  scaler(0),
+			Value:   Uint32(1234),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:2.8.0*255#1234#Wh"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("numeric value with nil scaler", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 1, 8, 0, 255},
+			Unit:    unit(30),
+			Scaler:  nil,
+			Value:   Uint32(42),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:1.8.0*255#42#Wh"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("octet string value", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 96, 1, 0, 255},
+			Value:   OctetString([]byte("ABC")),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:96.1.0*255#ABC#"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("octet string with non-printable bytes", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 96, 1, 0, 255},
+			Value:   OctetString([]byte{0x41, 0x42, 0x00, 0x43}),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:96.1.0*255#AB00 43 #"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("bool true", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 96, 5, 0, 255},
+			Value:   Bool(true),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:96.5.0*255#true#"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("bool false", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 96, 5, 0, 255},
+			Value:   Bool(false),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:96.5.0*255#false#"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("nil value returns false", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 1, 8, 0, 255},
+			Value:   nil,
+		}
+		_, ok := FormatReadingValue(e)
+		if ok {
+			t.Fatal("FormatReadingValue returned true for nil value, want false")
+		}
+	})
+
+	t.Run("short OBIS returns false", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 1},
+			Value:   Uint32(42),
+		}
+		_, ok := FormatReadingValue(e)
+		if ok {
+			t.Fatal("FormatReadingValue returned true for short OBIS, want false")
+		}
+	})
+
+	t.Run("nil unit produces empty unit part", func(t *testing.T) {
+		e := &ListEntry{
+			ObjName: []byte{1, 0, 1, 8, 0, 255},
+			Unit:    nil,
+			Scaler:  scaler(0),
+			Value:   Uint32(42),
+		}
+		got, ok := FormatReadingValue(e)
+		if !ok {
+			t.Fatal("FormatReadingValue returned false, want true")
+		}
+		want := "1-0:1.8.0*255#42#"
+		if got != want {
+			t.Errorf("FormatReadingValue() = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestReadings(t *testing.T) {
 	scaler := func(s int8) *int8 { return &s }
 	unit := func(u uint8) *uint8 { return &u }

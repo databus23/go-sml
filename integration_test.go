@@ -2,9 +2,7 @@ package sml_test
 
 import (
 	"bytes"
-	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,102 +11,6 @@ import (
 	"github.com/databus23/go-sml"
 	"github.com/databus23/go-sml/transport"
 )
-
-// formatOctetStringMixed formats an OctetString using the C sml_server "mixed"
-// algorithm: bytes in range (0x20, 0x7b) are output as ASCII; once any byte falls
-// outside that range, all remaining bytes use lowercase hex with trailing space.
-// The thresholds match sml_server exactly (not general ASCII printability).
-func formatOctetStringMixed(data []byte) string {
-	var b strings.Builder
-	mixed := true
-	for _, c := range data {
-		if mixed && c > 0x20 && c < 0x7b {
-			b.WriteByte(c)
-		} else {
-			mixed = false
-			fmt.Fprintf(&b, "%02x ", c)
-		}
-	}
-	return b.String()
-}
-
-// formatNumericValue formats an integer or unsigned value with scaler applied,
-// matching the C sml_server precision rules.
-func formatNumericValue(raw int64, scaler int8) string {
-	precision := 0
-	if scaler < 0 {
-		precision = int(-scaler)
-	}
-	scaled := float64(raw) * math.Pow(10, float64(scaler))
-	return fmt.Sprintf("%.*f", precision, scaled)
-}
-
-// rawInt64 extracts the raw integer value from a numeric SML value type.
-// Returns (value, true) for numeric types, (0, false) otherwise.
-func rawInt64(v sml.Value) (int64, bool) {
-	switch val := v.(type) {
-	case sml.Int8:
-		return int64(val), true
-	case sml.Int16:
-		return int64(val), true
-	case sml.Int32:
-		return int64(val), true
-	case sml.Int64:
-		return int64(val), true
-	case sml.Uint8:
-		return int64(val), true
-	case sml.Uint16:
-		return int64(val), true
-	case sml.Uint32:
-		return int64(val), true
-	case sml.Uint64:
-		return int64(val), true
-	default:
-		return 0, false
-	}
-}
-
-// formatListEntry formats a single ListEntry matching C sml_server output.
-// Returns ("", false) if the entry should be skipped (nil value).
-func formatListEntry(entry *sml.ListEntry) (string, bool) {
-	if entry.Value == nil {
-		return "", false
-	}
-
-	obis := entry.OBISString()
-	if obis == "" {
-		return "", false
-	}
-
-	var valuePart string
-	switch val := entry.Value.(type) {
-	case sml.OctetString:
-		valuePart = formatOctetStringMixed([]byte(val))
-	case sml.Bool:
-		if bool(val) {
-			valuePart = "true"
-		} else {
-			valuePart = "false"
-		}
-	default:
-		raw, ok := rawInt64(entry.Value)
-		if !ok {
-			return "", false
-		}
-		var scaler int8
-		if entry.Scaler != nil {
-			scaler = *entry.Scaler
-		}
-		valuePart = formatNumericValue(raw, scaler)
-	}
-
-	unitPart := ""
-	if entry.Unit != nil {
-		unitPart = sml.UnitName(*entry.Unit)
-	}
-
-	return fmt.Sprintf("%s#%s#%s", obis, valuePart, unitPart), true
-}
 
 // collectSMLServerOutput reads all frames from a .bin file, decodes them,
 // and formats all GetListResponse entries matching C sml_server output.
@@ -136,7 +38,7 @@ func collectSMLServerOutput(binData []byte) []string {
 				continue
 			}
 			for i := range glr.ValList {
-				line, ok := formatListEntry(&glr.ValList[i])
+				line, ok := sml.FormatReadingValue(&glr.ValList[i])
 				if ok {
 					lines = append(lines, line)
 				}
